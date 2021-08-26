@@ -1,0 +1,113 @@
+#https://raw.githubusercontent.com/Azure-Samples/dotnetcore-containerized-sqldb-ghactions/main/.github/workflows/build-deploy.yam
+name: Build image, push to Docker & deploy to Azure App Service
+
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+    - '.github/workflows/**'
+
+env:
+  AZURE_RESOURCE_GROUP: rg-todo-sample        # target resource, must match the {resource-group-name} you setup in the pre-requisties
+  WEB_APP_NAME: app-todo-sample               # set the name for the Web App on Azure
+  CONTAINER_IMAGE_NAME: app-todo-sample       # set the name for the container image
+  ACR_NAME: acrtodosample                     # set the name for the Azure Container Registry
+  ACR_LOGIN_SERVER: acrtodosample.azurecr.io  # fqdn for the Azure Container Registry
+  ACR_USERNAME: ${{ secrets.ACR_USERNAME }}   # user name for accessing Azure Container Registry
+  ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}   # password for accesing the Azure Container Registry
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v2
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v1
+
+    - name: Login to ACR
+      uses: docker/login-action@v1
+      with:
+        registry: ${{ env.ACR_LOGIN_SERVER }}
+        username: ${{ env.ACR_USERNAME }}
+        password: ${{ env.ACR_PASSWORD }}
+        logout: false
+    
+
+    - name: Build and push container image to registry
+      uses: docker/build-push-action@v2
+      with:
+        context: ./application/
+        push: true
+        tags: ${{ env.ACR_LOGIN_SERVER }}/${{ env.CONTAINER_IMAGE_NAME }}:${{ github.sha }}
+        file: ./application/Dockerfile
+
+
+  deploy:
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v2
+
+    - name: Login for az cli commands 
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Set version date
+      run: |
+        echo "APP_VERSION_DATE=$(date +'%Y-%m-%dT%H:%M:%S')" >> $GITHUB_ENV
+
+    - name: Set Web App Settings
+      uses: Azure/appservice-settings@v1
+      with:
+        app-name: ${{ env.WEB_APP_NAME }}  
+        slot-name: staging
+        app-settings-json: |
+          [
+            {
+              "name": "WEBSITES_ENABLE_APP_SERVICE_STORAGE",
+              "value": "false",
+              "slotSetting": false
+            },
+            {
+              "name": "DOCKER_REGISTRY_SERVER_URL",
+              "value": "${{ env.ACR_LOGIN_SERVER }}",
+              "slotSetting": false
+            },
+            {
+              "name": "DOCKER_REGISTRY_SERVER_USERNAME",
+              "value": "${{ env.ACR_USERNAME  }}",
+              "slotSetting": false
+            },
+            {
+              "name": "DOCKER_REGISTRY_SERVER_PASSWORD",
+              "value": "${{ env.ACR_PASSWORD }}",
+              "slotSetting": false
+            },
+            {
+              "name": "VersionInfo__Number",
+              "value": "1.0.${{ github.run_number }}",
+              "slotSetting": false
+            },
+            {
+              "name": "VersionInfo__Date",
+              "value": "${{ env.APP_VERSION_DATE }}",
+              "slotSetting": false
+            }
+          ]
+
+    - name: Deploy Azure WebApp to Staging
+      uses: azure/webapps-deploy@v2
+      with: 
+        app-name: ${{ env.WEB_APP_NAME }} 
+        images: ${{ env.ACR_LOGIN_SERVER }}/${{ env.CONTAINER_IMAGE_NAME }}:${{ github.sha }}
+        slot-name: staging
+
+    - name: Swap to production slot
+      run: |
+        az webapp deployment slot swap --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --name ${{ env.WEB_APP_NAME }} --slot staging --target-slot production
+        echo "Swap finished. WebApp accessible at https://$(az webapp show --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --name ${{ env.WEB_APP_NAME }} --query hostNames[0] -o tsv)"
