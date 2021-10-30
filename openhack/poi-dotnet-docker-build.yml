@@ -1,0 +1,94 @@
+name: Build POI Container
+
+on:
+  push:
+    branches: '*'
+    paths: 
+    - 'apis/poi/**.csproj'
+    - 'apis/poi/**.cs'
+    - 'apis/poi/**.sln'
+    - '.github/workflows/dotnet.yml'
+    - '.github/workflows/poi-dotnet-docker-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: production
+       
+    steps:
+
+    - name: 'Checkout Github Action'
+      uses: actions/checkout@master
+
+    - name: 'Login via Azure CLI'
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURECREDENTIALS }}
+        
+    - name: Build and push
+      working-directory: 'apis/poi/web'
+      run: |
+        az acr login -n openhackh9786t04acr
+        docker build . -t openhackh9786t04acr.azurecr.io/devopsoh/api-poi:${{ github.run_number }}
+        docker push openhackh9786t04acr.azurecr.io/devopsoh/api-poi:${{ github.run_number }} 
+    
+    # Always deploy to staging
+    
+    - uses: azure/webapps-deploy@v2
+      with:
+        app-name: 'openhackh9786t04poi'
+        images: 'openhackh9786t04acr.azurecr.io/devopsoh/api-poi:${{ github.run_number }}'
+        slot-name: 'staging'
+        
+    # Test staging to see if it works
+    - name: Test Staging
+      run: |
+        bash ./polling.sh https://openhackh9786t04poi-staging.azurewebsites.net/api/healthcheck/poi
+  
+  deploy:
+    runs-on: ubuntu-latest
+    environment: canary
+    needs: build
+    steps:
+    - name: 'Checkout Github Action'
+      uses: actions/checkout@master
+      
+    - name: 'Login via Azure CLI'
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURECREDENTIALS }}
+        
+    - name: Configure traffic
+      run: |
+        az webapp traffic-routing set --distribution staging=10 --name openhackh9786t04poi --resource-group openhackh9786t04rg      
+    - name: Test Production
+      run: |
+        bash ./polling2.sh https://openhackh9786t04poi-staging.azurewebsites.net/api/healthcheck/poiXXXXX
+        
+    - name: Reset Traffic back to 100% prod
+      if: failure()
+      run: |
+        az webapp traffic-routing set --distribution staging=0 --name openhackh9786t04poi --resource-group openhackh9786t04rg  
+
+
+  swap:
+    runs-on: ubuntu-latest
+    environment: release
+    needs: deploy
+    steps:
+    
+    
+    - name: 'Login via Azure CLI'
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURECREDENTIALS }}
+        
+    # Swap
+    - name: Swap to production slot
+      run: |
+        az webapp deployment slot swap --resource-group "openhackh9786t04rg" --name "openhackh9786t04poi" --slot staging --target-slot production
+        
+    
+    # Test prod to make sure it works
+    
+    # Optional: rollback if prod has issues

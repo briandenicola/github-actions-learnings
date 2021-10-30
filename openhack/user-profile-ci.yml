@@ -1,0 +1,51 @@
+name: User Profile CI
+on:
+  push:
+    branches: '*'
+    paths: 
+    - 'apis/userprofile/'
+    - '.github/workflows/user-profile-ci.yml'
+
+  pull_request:
+    branches: [ main ]
+    paths: 
+    - 'apis/userprofile/'
+    - '.github/workflows/user-profile-ci.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      NODE_VERSION: '10.x'
+    defaults:
+      run:
+       working-directory: 'apis/userprofile'
+     
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Use Node.js 
+      uses: actions/setup-node@v2
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+    - name: npm install
+      run: |
+        npm install
+
+    - name: npm build
+      run: |
+        npm run build --if-present
+
+    - name: npm test
+      run: 
+        npm run test --if-present
+
+    - uses: nashmaniac/create-issue-action@v1.1
+      name: Create Issue Action
+      if: ${{ failure() }}
+      with: 
+        title: Build Failed
+        token: ${{secrets.GITHUB_TOKEN}}
+        assignees: ${{github.actor}}
+        labels: worflow-failed
+        body: "Build Failure \n Build Number: ${{ github.run_number }} \n Build Log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} \n SHA: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }}"
