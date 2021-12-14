@@ -1,0 +1,25 @@
+name: Test Conditional Workflows
+on:
+  workflow_dispatch:
+    inputs:
+      upgrade:
+        required: true
+        type: boolean
+        description: 'Whether to upgrade the application'
+        default: "false"
+jobs:
+  deploy_api:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Deploy API Full
+        if: github.event.inputs.upgrade == 'false'
+        shell: pwsh
+        run: |
+          Write-Host "Full Deploy"
+
+      - name: Upgrade API 
+        if: github.event.inputs.upgrade == 'true'
+        shell: pwsh
+        run: |
+          Write-Host "Upgrade Deploy"
